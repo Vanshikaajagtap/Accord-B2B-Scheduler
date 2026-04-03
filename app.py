@@ -4,36 +4,23 @@ from auth_test import get_credentials
 from gmail_tool import get_gmail_service, send_email
 
 st.set_page_config(page_title="Accord", layout="wide")
-
-st.title("Accord : Agentic B2B Meeting  Scheduler")
-st.caption("AI that handles complex scheduling so you don't have to.")
+st.title("Accord : Agentic B2B Meeting Scheduler")
+ 
+if "result" not in st.session_state:
+    st.session_state.result = None
+if "client_email" not in st.session_state:
+    st.session_state.client_email = ""
  
 col1, col2 = st.columns(2)
-
 with col1:
-    st.subheader("Incoming Request")
-    request = st.text_area(
-        "Paste the scheduling request here:",
-        value="Hi, could we set up a 30 minute call sometime in the next 5 days? Morning works best, EST timezone. My email is vanshika.m.jagtap@gmail.com",
-        height=150
-    )
-    client_email = st.text_input("Client's email (to send reply to):", value="vanshika.m.jagtap@gmail.com")
-    run = st.button("Run Accord", type="primary", use_container_width=True)
-
+    request = st.text_area("Incoming scheduling request:", height=150,
+        value="Hi, could we set up a 30 minute call in the next 5 days? Morning EST works best. My email is vanshika.m.jagtap@gmail.com")
 with col2:
-    st.subheader("Agent Reasoning Log")
-    log_box = st.empty()
+    client_email = st.text_input("Client email:", value="vanshika.m.jagtap@gmail.com")
+    run = st.button("Run Accord", type="primary")
  
 if run:
-    logs = []
-
-    def log(msg):
-        logs.append(msg)
-        log_box.markdown("\n\n".join(logs))
-
     with st.spinner("Accord is working..."):
-        log("**Step 1:** Parsing request with Gemini...")
-        
         accord = build_accord_graph()
         result = accord.invoke({
             "raw_request": request,
@@ -45,17 +32,15 @@ if run:
             "draft_reply": "",
             "retry_count": 0
         })
-
-        log(f"**Parsed:** {result['participants']} · {result['duration_mins']} mins · {result['timeframe_days']} days")
-        log(f"**Step 2:** Fetched calendars for {len(result['participants'])} participant(s)")
-        log(f"**Found:** {len(result['free_slots'])} overlapping free window(s)")
-        log("**Step 3:** Drafted professional reply")
-        log("**Step 4:** Waiting for your approval...")
+        st.session_state.result = result
+        st.session_state.client_email = client_email
+    st.success("Draft ready!")
  
+if st.session_state.result:
     st.divider()
     st.subheader("Draft Reply")
-    st.info(result["draft_reply"])
- 
+    st.info(st.session_state.result["draft_reply"])
+
     st.divider()
     st.subheader("Human-in-the-Loop Gateway")
     st.warning("Accord will not send anything until YOU approve.")
@@ -63,17 +48,38 @@ if run:
     approve_col, reject_col = st.columns(2)
 
     with approve_col:
-        if st.button("Approve & Send", type="primary", use_container_width=True):
-            creds = get_credentials()
-            gmail = get_gmail_service(creds)
-            send_email(
-                gmail,
-                to=client_email,
-                subject="Meeting Request — Available Times",
-                body=result["draft_reply"]
-            )
-            st.success("Email sent! Calendar invite will follow once client confirms.")
+        if st.button("Approve & Send", type="primary", use_container_width=True, key="approve_btn"):
+            try:
+                creds = get_credentials()
+                gmail = get_gmail_service(creds)
+                r = send_email(
+                    gmail,
+                    to=st.session_state.client_email,
+                    subject="Meeting Request — Available Times",
+                    body=st.session_state.result["draft_reply"]
+                )
+                st.success(f"Email sent! ID: {r['id']}")
+            except Exception as e:
+                st.error(f"Email failed: {e}")
+
+            try:
+                from calendar_tool import get_calendar_service, create_calendar_event
+                creds = get_credentials()
+                cal = get_calendar_service(creds)
+                first_slot = st.session_state.result["free_slots"][0]
+                event = create_calendar_event(
+                    cal,
+                    summary="Meeting via Accord",
+                    attendees=st.session_state.result["participants"] + [st.session_state.client_email],
+                    start_time=first_slot["start"],
+                    end_time=first_slot["end"],
+                    timezone=st.session_state.result["timezone"]
+                )
+                st.success(f"Calendar event created!")
+            except Exception as e:
+                st.error(f"Calendar failed: {e}")
 
     with reject_col:
-        if st.button("Reject & Discard", use_container_width=True):
-            st.error("Draft discarded. Run Accord again with a different request.")
+        if st.button("Reject & Discard", use_container_width=True, key="reject_btn"):
+            st.session_state.result = None
+            st.rerun()
