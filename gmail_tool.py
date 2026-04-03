@@ -35,18 +35,3 @@ def create_draft(service, to, subject, body):
     ).execute()
     print(f"Draft saved! Draft ID: {draft['id']}")
     return draft
-
-#test code
-
-if __name__ == "__main__":
-    from auth_test import get_credentials
-
-    creds = get_credentials()
-    service = get_gmail_service(creds)
- 
-    send_email(
-        service,
-        to="vanshika.m.jagtap@gmail.com",   
-        subject="Accord Test Email",
-        body="If you're reading this, Gmail integration is working!"
-    )

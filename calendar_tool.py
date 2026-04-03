@@ -59,27 +59,3 @@ def find_free_slots(busy_dict, time_min, time_max, duration_mins=30, timezone="U
             free_slots.append((cursor, end))
 
     return free_slots 
-
-
-
-#testing testing testing
-
-if __name__ == "__main__":
-    from auth_test import get_credentials
-
-    creds = get_credentials()
-    service = get_calendar_service(creds)
-
-    
-    now = datetime.utcnow().isoformat() + "Z"
-    three_days = (datetime.utcnow() + timedelta(days=3)).isoformat() + "Z"
- 
-    YOUR_EMAIL = "vanshika.m.jagtap@gmail.com"  
-    
-    busy = get_free_busy(service, [YOUR_EMAIL], now, three_days)
-    print("Busy slots:", busy)
-
-    free = find_free_slots(busy, now, three_days, duration_mins=30)
-    print(f"\nFree windows ({len(free)} found):")
-    for s, e in free:
-        print(f"  {s.strftime('%a %b %d %I:%M %p')} → {e.strftime('%I:%M %p')} UTC")
