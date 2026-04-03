@@ -86,10 +86,10 @@ Incoming Request
 
 ```bash
 # Clone the repo
-git clone https://github.com/YOUR_USERNAME/Accord-B2B.git
+git clone https://github.com/Vanshikaajagtap/Accord-B2B-Scheduler.git
 cd Accord-B2B/accord
 
-# Create and activate virtual environment
+# Create and activate a virtual environment
 python -m venv .venv
 source .venv/bin/activate
 
