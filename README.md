@@ -65,7 +65,7 @@ Incoming Request
 | Layer | Technology |
 |---|---|
 | Agent Orchestration | LangGraph |
-| LLM | Gemini 2.0 Flash |
+| LLM | Gemini 3.0 Flash |
 | Core Language | Python |
 | Calendar Integration | Google Calendar API |
 | Email Integration | Gmail API |
