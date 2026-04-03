@@ -4,7 +4,6 @@ from typing import TypedDict, List, Optional
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import json
-
 from auth_test import get_credentials
 from calendar_tool import get_calendar_service, get_free_busy, find_free_slots
 from gmail_tool import get_gmail_service, create_draft
