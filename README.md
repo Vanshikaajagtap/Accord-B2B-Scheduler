@@ -144,9 +144,9 @@ accord/
 
 ##  Team
 
-| Innoventurers|
-|---|---|
+### Innoventurers
+ 
 | Vanshika Jagtap | vanshika.m.jagtap@gmail.com |
 | Ipsita Roy | ipshitaroy2007@gmail.com |
 | Fathima Ummerchintavida | fathimafalaq.em@gmail.com |
-| Roshini R |rr8415@srmist.edu.in
+| Roshini R | rr8415@srmist.edu.in |
