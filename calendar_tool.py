@@ -59,3 +59,23 @@ def find_free_slots(busy_dict, time_min, time_max, duration_mins=30, timezone="U
             free_slots.append((cursor, end))
 
     return free_slots 
+
+def create_calendar_event(service, summary, attendees, start_time, end_time, timezone="UTC"):
+    
+    event = {
+        "summary": summary,
+        "start": {"dateTime": start_time, "timeZone": timezone},
+        "end": {"dateTime": end_time, "timeZone": timezone},
+        "attendees": [{"email": email} for email in attendees],
+        "conferenceData": {
+            "createRequest": {"requestId": "accord-meet"}
+        }
+    }
+    event = service.events().insert(
+        calendarId="primary",
+        body=event,
+        conferenceDataVersion=1,  
+        sendUpdates="all"          
+    ).execute()
+    print(f"Event created: {event.get('htmlLink')}")
+    return event
