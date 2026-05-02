@@ -1,21 +1,12 @@
-﻿import React, { useState, useEffect } from "react";
+﻿import React, { useState } from "react";
 import "./App.css";
 
 function App() {
-  const [theme, setTheme] = useState("beige");
+  const [theme, setTheme] = useState("dark");
   const isBeige = theme === "beige";
 
-  useEffect(() => {
-    document.body.classList.toggle("theme-beige", isBeige);
-    document.body.classList.toggle("theme-dark", !isBeige);
-
-    return () => {
-      document.body.classList.remove("theme-beige", "theme-dark");
-    };
-  }, [isBeige]);
-
   return (
-    <div className="app">
+    <div className={isBeige ? "app theme-beige" : "app theme-dark"}>
       <div className="page-shell">
         <header className="topbar">
           <div className="brand">
@@ -40,20 +31,21 @@ function App() {
 
         <main className="hero-grid">
           <section className="hero-copy">
-            <h1>Elegant scheduling made simple.</h1>
+            <span className="eyebrow">Coffee Experience</span>
+            <h1>Coffee meets scheduling.</h1>
             <p className="hero-text">
               Create calmer calendars and elevate your workflow with a premium visual dashboard. Theme the UI to beige for a warm, modern look.
             </p>
 
             <div className="hero-actions">
               <button className="primary-btn">Book a Session</button>
-              <button className="secondary-btn">View Schedule</button>
+              <button className="secondary-btn">Explore Menu</button>
             </div>
 
             <div className="status-pill-row">
-              <button className="pill active">Day</button>
-              <button className="pill">Week</button>
-              <button className="pill">Month</button>
+              <button className="pill active">Brew</button>
+              <button className="pill">Roast</button>
+              <button className="pill">Order</button>
             </div>
 
             <div className="stats-panel">
@@ -76,7 +68,7 @@ function App() {
             <div className="preview-card">
               <div className="preview-header">
                 <div>
-                  <p className="preview-title">Focus Block</p>
+                  <p className="preview-title">Coffee Break</p>
                   <p className="preview-subtitle">Tap to view your next focus block.</p>
                 </div>
                 <button className="preview-action">View</button>
