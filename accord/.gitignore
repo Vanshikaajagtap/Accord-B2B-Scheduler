@@ -1,0 +1,7 @@
+token.json
+credentials.json
+.env
+.DS_Storetokens/*.json
+.env
+credentials.json
+__pycache__/

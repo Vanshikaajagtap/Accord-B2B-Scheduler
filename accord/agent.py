@@ -25,28 +25,31 @@ class AccordState(TypedDict):
     retry_count: int
     is_compromise: bool
     unauthenticated_participants: List[str]
+    target_date: str
 
 llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0)
 
 
 def parse_request(state: AccordState) -> AccordState:
     print("\nParsing request...")
+    current_date = datetime.now().strftime("%Y-%m-%d")
     prompt = f"""
 You are a scheduling assistant. Extract structured info from this request.
 Return ONLY valid JSON, no explanation.
 
+Current Date: {current_date}
 Request: "{state['raw_request']}"
 
 Handle these edge cases carefully:
-- "sometime next week" = timeframe_days: 7
-- "ASAP" or "urgent" = timeframe_days: 2
+- If a specific date is mentioned (like "12th may"), set "target_date" to that date in "YYYY-MM-DD" format. 
+- Otherwise, set "target_date" to null and use "timeframe_days" (e.g. "next week" = 7, default = 5).
 - "morning" = preferred_time: "morning"
 - "afternoon" = preferred_time: "afternoon"
 - "not Mondays" or "avoid Fridays" = excluded_days: ["Monday"]
 - "30 mins" or "half hour" or "quick call" = duration_mins: 30
 - "an hour" = duration_mins: 60
 - multiple emails mentioned = all go in participants list
-- if no timezone mentioned = default "UTC"
+- timezone: MUST be a standard IANA timezone identifier (e.g., "America/New_York", "Asia/Kolkata", "Europe/London"). NEVER return abbreviations like "IST" or "EST". If none mentioned = default "UTC".
 - if no duration mentioned = default 30
 
 Return exactly:
@@ -56,7 +59,8 @@ Return exactly:
   "timeframe_days": 7,
   "timezone": "UTC",
   "preferred_time": "any",
-  "excluded_days": []
+  "excluded_days": [],
+  "target_date": null
 }}
 """
     response = llm.invoke(prompt)
@@ -78,6 +82,7 @@ Return exactly:
         "timezone": parsed["timezone"],
         "preferred_time": parsed.get("preferred_time", "any"),
         "excluded_days": parsed.get("excluded_days", []),
+        "target_date": parsed.get("target_date"),
     }
 
 
@@ -86,9 +91,15 @@ def fetch_availability(state: AccordState) -> AccordState:
     creds = get_credentials()
     fallback_service = get_calendar_service(creds)
 
-    days = state["timeframe_days"] + (state["retry_count"] * 3)
-    now = datetime.utcnow().isoformat() + "Z"
-    future = (datetime.utcnow() + timedelta(days=days)).isoformat() + "Z"
+    if state.get("target_date"):
+        target_dt = datetime.fromisoformat(state["target_date"])
+        now = target_dt.isoformat() + "Z"
+        future = (target_dt + timedelta(days=1)).isoformat() + "Z"
+        print(f"   Target date specified: {state['target_date']}")
+    else:
+        days = state["timeframe_days"] + (state["retry_count"] * 3)
+        now = datetime.utcnow().isoformat() + "Z"
+        future = (datetime.utcnow() + timedelta(days=days)).isoformat() + "Z"
 
     participants = state["participants"]
 

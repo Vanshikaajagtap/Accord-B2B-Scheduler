@@ -43,23 +43,43 @@ function App() {
     setAuthLoading(true);
     setAuthMessage("");
     try {
-      const res = await fetch("/api/participants/authenticate", {
+      // Step 1: get the Google OAuth URL from the backend
+      const res = await fetch("/api/participants/auth-start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: newEmail }),
       });
       const data = await res.json();
-      if (data.authenticated) {
-        setAuthMessage("Authenticated " + newEmail);
-        setNewEmail("");
-        fetchParticipants();
-      } else {
-        setAuthMessage("Failed: " + (data.error || "Unknown error"));
+      if (data.error) {
+        setAuthMessage("Error: " + data.error);
+        setAuthLoading(false);
+        return;
       }
+
+      // Step 2: open the OAuth URL in a popup and poll until it closes
+      const popup = window.open(data.auth_url, "accord_oauth", "width=600,height=700");
+      const emailBeingAuthed = newEmail;
+      setNewEmail("");
+
+      const poll = setInterval(async () => {
+        if (popup && popup.closed) {
+          clearInterval(poll);
+          setAuthLoading(false);
+          // Re-fetch participants to see if it worked
+          const updated = await fetch("/api/participants").then(r => r.json());
+          const list = updated.participants || [];
+          setParticipants(list);
+          if (list.includes(emailBeingAuthed)) {
+            setAuthMessage("Authenticated " + emailBeingAuthed);
+          } else {
+            setAuthMessage("Failed: authentication window was closed before completing.");
+          }
+        }
+      }, 1000);
     } catch (e) {
       setAuthMessage("Error: " + e.message);
+      setAuthLoading(false);
     }
-    setAuthLoading(false);
   }
 
   async function handleSchedule() {
