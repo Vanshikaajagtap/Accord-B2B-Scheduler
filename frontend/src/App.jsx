@@ -16,6 +16,18 @@ function App() {
   const [approveLoading, setApproveLoading] = useState(false);
   const [approveResult, setApproveResult] = useState(null);
 
+  // Email inbox state
+  const [inboxQuery, setInboxQuery] = useState("");
+  const [inboxEmails, setInboxEmails] = useState([]);
+  const [inboxLoading, setInboxLoading] = useState(false);
+  const [selectedEmail, setSelectedEmail] = useState(null);
+  const [emailDetail, setEmailDetail] = useState(null);
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [parsedDocs, setParsedDocs] = useState([]);
+
+  // Plugins state
+  const [plugins, setPlugins] = useState([]);
+
   useEffect(() => {
     document.body.classList.toggle("theme-light", isLight);
     document.body.classList.toggle("theme-dark", !isLight);
@@ -26,6 +38,7 @@ function App() {
 
   useEffect(() => {
     fetchParticipants();
+    fetchPlugins();
   }, []);
 
   async function fetchParticipants() {
@@ -38,12 +51,21 @@ function App() {
     }
   }
 
+  async function fetchPlugins() {
+    try {
+      const res = await fetch("/api/plugins");
+      const data = await res.json();
+      setPlugins(data.plugins || []);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
   async function handleAuthenticate() {
     if (!newEmail) return;
     setAuthLoading(true);
     setAuthMessage("");
     try {
-      // Step 1: get the Google OAuth URL from the backend
       const res = await fetch("/api/participants/auth-start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -56,7 +78,6 @@ function App() {
         return;
       }
 
-      // Step 2: open the OAuth URL in a popup and poll until it closes
       const popup = window.open(data.auth_url, "accord_oauth", "width=600,height=700");
       const emailBeingAuthed = newEmail;
       setNewEmail("");
@@ -65,7 +86,6 @@ function App() {
         if (popup && popup.closed) {
           clearInterval(poll);
           setAuthLoading(false);
-          // Re-fetch participants to see if it worked
           const updated = await fetch("/api/participants").then(r => r.json());
           const list = updated.participants || [];
           setParticipants(list);
@@ -129,6 +149,54 @@ function App() {
     setApproveResult(null);
   }
 
+  // --- Email Inbox handlers ---
+
+  async function handleLoadInbox() {
+    setInboxLoading(true);
+    try {
+      const params = new URLSearchParams({ max_results: "20" });
+      if (inboxQuery) params.set("query", inboxQuery);
+      const res = await fetch(`/api/emails?${params}`);
+      const data = await res.json();
+      setInboxEmails(data.emails || []);
+    } catch (e) {
+      console.error(e);
+      setInboxEmails([]);
+    }
+    setInboxLoading(false);
+  }
+
+  async function handleSelectEmail(msgId) {
+    setSelectedEmail(msgId);
+    setEmailLoading(true);
+    setEmailDetail(null);
+    setParsedDocs([]);
+    try {
+      const res = await fetch(`/api/emails/${msgId}`);
+      const data = await res.json();
+      setEmailDetail(data);
+      // Parse attachments
+      if (data.attachments?.length > 0) {
+        const parseRes = await fetch(`/api/emails/${msgId}/parse`);
+        const parseData = await parseRes.json();
+        setParsedDocs(parseData.documents || []);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    setEmailLoading(false);
+  }
+
+  function handleFeedToScheduler() {
+    if (!emailDetail) return;
+    let combined = emailDetail.body_text || "";
+    for (const doc of parsedDocs) {
+      combined += `\n\n--- ${doc.filename} ---\n${doc.text}`;
+    }
+    setRequest(combined);
+    setView("schedule");
+  }
+
   return (
     <div className="app">
       <div className="page-shell">
@@ -144,6 +212,7 @@ function App() {
           <nav className="nav-links">
             <a href="#home" onClick={() => setView("home")}>Home</a>
             <a href="#schedule" onClick={() => setView("schedule")}>Schedule</a>
+            <a href="#inbox" onClick={() => setView("inbox")}>Inbox</a>
             <a href="#participants" onClick={() => setView("participants")}>Participants</a>
           </nav>
 
@@ -156,20 +225,21 @@ function App() {
           </button>
         </header>
 
+        {/* ================= HOME ================= */}
         {view === "home" && (
           <main className="hero-grid">
             <section className="hero-copy">
               <h1>Elegant scheduling made simple.</h1>
               <p className="hero-text">
-                Accord checks every participant's calendar and finds times that work for everyone. No more email ping-pong.
+                Accord checks every participant's calendar, reads incoming emails and documents, and finds times that work for everyone. No more email ping-pong.
               </p>
 
               <div className="hero-actions">
                 <button className="primary-btn" onClick={() => setView("schedule")}>
                   Schedule a Meeting
                 </button>
-                <button className="secondary-btn" onClick={() => setView("participants")}>
-                  Manage Participants
+                <button className="secondary-btn" onClick={() => setView("inbox")}>
+                  Read Email Inbox
                 </button>
               </div>
 
@@ -179,8 +249,8 @@ function App() {
                   <strong>{participants.length} accounts</strong>
                 </div>
                 <div className="stat-card">
-                  <span>Engine</span>
-                  <strong>Multi-calendar</strong>
+                  <span>Plugins</span>
+                  <strong>{plugins.length} email providers</strong>
                 </div>
                 <div className="stat-card">
                   <span>Approval</span>
@@ -194,30 +264,30 @@ function App() {
                 <div className="preview-header">
                   <div>
                     <p className="preview-title">How it works</p>
-                    <p className="preview-subtitle">Accord's scheduling pipeline</p>
+                    <p className="preview-subtitle">Accord's enhanced pipeline</p>
                   </div>
                 </div>
 
                 <div className="preview-body">
                   <div className="preview-metric">
                     <strong>1</strong>
-                    <span>Parse request with AI</span>
+                    <span>Read email &amp; parse docs</span>
                   </div>
                   <div className="preview-metric">
                     <strong>2</strong>
-                    <span>Check all calendars</span>
+                    <span>Parse request with AI</span>
                   </div>
                   <div className="preview-metric">
                     <strong>3</strong>
-                    <span>Find mutual free slots</span>
+                    <span>Check all calendars</span>
                   </div>
                   <div className="preview-metric">
                     <strong>4</strong>
-                    <span>Draft reply for approval</span>
+                    <span>Find mutual free slots</span>
                   </div>
                   <div className="preview-metric">
                     <strong>5</strong>
-                    <span>Send email + book event</span>
+                    <span>Draft reply for approval</span>
                   </div>
                 </div>
               </div>
@@ -225,6 +295,7 @@ function App() {
           </main>
         )}
 
+        {/* ================= SCHEDULE ================= */}
         {view === "schedule" && (
           <main className="schedule-view">
             <section className="schedule-form-section">
@@ -267,6 +338,24 @@ function App() {
 
             {result && !result.error && (
               <section className="result-section">
+                {result.source_documents?.length > 0 && (
+                  <div className="result-block">
+                    <h3 className="result-heading">Documents Read from Email</h3>
+                    <div className="doc-list">
+                      {result.source_documents.map((doc, i) => (
+                        <div key={i} className="doc-card">
+                          <span className="doc-icon">📄</span>
+                          <div className="doc-info">
+                            <strong>{doc.filename}</strong>
+                            <small>{doc.mimeType}</small>
+                            <p className="doc-preview">{doc.text?.slice(0, 200)}...</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="result-block">
                   <h3 className="result-heading">Participants Checked</h3>
                   <div className="participant-list">
@@ -355,12 +444,137 @@ function App() {
           </main>
         )}
 
+        {/* ================= INBOX ================= */}
+        {view === "inbox" && (
+          <main className="inbox-view">
+            <div className="inbox-layout">
+              {/* Left: Email list */}
+              <section className="inbox-list-section">
+                <h2 className="section-title">Email Inbox</h2>
+                <p className="section-subtitle">
+                  Read incoming emails and parse attached documents directly from your Gmail inbox.
+                </p>
+
+                {plugins.length > 0 && (
+                  <div className="plugin-badge">
+                    Plugin active: <strong>{plugins[0].display_name}</strong>
+                  </div>
+                )}
+
+                <div className="inbox-search-row">
+                  <input
+                    className="form-input"
+                    type="text"
+                    placeholder="Search emails (e.g. is:unread, from:alice@co.com)"
+                    value={inboxQuery}
+                    onChange={(e) => setInboxQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleLoadInbox()}
+                  />
+                  <button
+                    className="primary-btn"
+                    onClick={handleLoadInbox}
+                    disabled={inboxLoading}
+                  >
+                    {inboxLoading ? "Loading..." : "Search"}
+                  </button>
+                </div>
+
+                <div className="email-list">
+                  {inboxEmails.length === 0 && !inboxLoading && (
+                    <div className="empty-state">
+                      {inboxEmails.length === 0
+                        ? "No emails loaded. Click Search to fetch your inbox."
+                        : "No emails found."}
+                    </div>
+                  )}
+                  {inboxLoading && (
+                    <div className="empty-state">Loading inbox...</div>
+                  )}
+                  {inboxEmails.map((em) => (
+                    <button
+                      key={em.id}
+                      className={`email-item ${selectedEmail === em.id ? "selected" : ""}`}
+                      onClick={() => handleSelectEmail(em.id)}
+                    >
+                      <div className="email-item-header">
+                        <span className="email-sender">{em.from?.split("<")[0]?.trim()}</span>
+                        <span className="email-date">{em.date?.split(",")[1]?.trim()?.split(" ").slice(0, 3)?.join(" ")}</span>
+                      </div>
+                      <div className="email-subject">{em.subject}</div>
+                      <div className="email-snippet">{em.snippet}</div>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              {/* Right: Email detail */}
+              <section className="inbox-detail-section">
+                {emailLoading && (
+                  <div className="empty-state">Loading email...</div>
+                )}
+
+                {!emailLoading && !emailDetail && (
+                  <div className="empty-state">
+                    Select an email from the inbox to view its content and parse any document attachments.
+                  </div>
+                )}
+
+                {emailDetail && (
+                  <div className="email-detail">
+                    <div className="email-detail-header">
+                      <h3 className="email-detail-subject">{emailDetail.subject}</h3>
+                      <div className="email-detail-meta">
+                        <span><strong>From:</strong> {emailDetail.from}</span>
+                        <span><strong>To:</strong> {emailDetail.to}</span>
+                        <span><strong>Date:</strong> {emailDetail.date}</span>
+                      </div>
+                    </div>
+
+                    <div className="email-body-box">
+                      {emailDetail.body_text || "(No text content)"}
+                    </div>
+
+                    {parsedDocs.length > 0 && (
+                      <div className="parsed-docs-section">
+                        <h4 className="result-heading">Parsed Attachments ({parsedDocs.length})</h4>
+                        {parsedDocs.map((doc, i) => (
+                          <div key={i} className="parsed-doc-card">
+                            <div className="parsed-doc-header">
+                              <span className="doc-icon">📄</span>
+                              <div>
+                                <strong>{doc.filename}</strong>
+                                <small>{doc.mimeType}</small>
+                              </div>
+                            </div>
+                            <div className="parsed-doc-text">
+                              {doc.text}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <button
+                      className="primary-btn full-width"
+                      onClick={handleFeedToScheduler}
+                      style={{ marginTop: 20 }}
+                    >
+                      Feed to Accord Scheduler →
+                    </button>
+                  </div>
+                )}
+              </section>
+            </div>
+          </main>
+        )}
+
+        {/* ================= PARTICIPANTS ================= */}
         {view === "participants" && (
           <main className="participants-view">
             <section className="participants-section">
               <h2 className="section-title">Authenticated Participants</h2>
               <p className="section-subtitle">
-                Each participant must authenticate once so Accord can access their Google Calendar.
+                Each participant must authenticate once so Accord can access their Google Calendar and read their emails.
               </p>
 
               <div className="auth-form-row">

@@ -9,6 +9,8 @@ from auth_test import get_credentials, is_email_authenticated
 from calendar_tool import (get_calendar_service, get_multi_participant_busy,
                            find_free_slots)
 from gmail_tool import get_gmail_service, create_draft
+from email_reader import list_inbox, read_email, search_emails
+from document_parser import parse_attachments
 
 load_dotenv()
 
@@ -26,6 +28,10 @@ class AccordState(TypedDict):
     is_compromise: bool
     unauthenticated_participants: List[str]
     target_date: str
+    # Email / document reading fields
+    source_email_id: str
+    source_email_body: str
+    source_documents: List[dict]
 
 llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0)
 
@@ -33,12 +39,23 @@ llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0)
 def parse_request(state: AccordState) -> AccordState:
     print("\nParsing request...")
     current_date = datetime.now().strftime("%Y-%m-%d")
+
+    # Prefer source email body over raw_request when available
+    request_text = state.get("raw_request", "")
+    if state.get("source_email_body"):
+        email_body = state["source_email_body"]
+        doc_summaries = ""
+        for doc in state.get("source_documents", []):
+            doc_summaries += f"\nAttachment '{doc['filename']}':\n{doc['text'][:2000]}\n"
+        request_text = f"Email body:\n{email_body}\n\nAttached documents:\n{doc_summaries}" if doc_summaries else f"Email body:\n{email_body}"
+        print(f"   Using source email ({len(request_text)} chars)")
+
     prompt = f"""
 You are a scheduling assistant. Extract structured info from this request.
 Return ONLY valid JSON, no explanation.
 
 Current Date: {current_date}
-Request: "{state['raw_request']}"
+Request: "{request_text}"
 
 Handle these edge cases carefully:
 - If a specific date is mentioned (like "12th may"), set "target_date" to that date in "YYYY-MM-DD" format. 
@@ -219,16 +236,57 @@ def should_draft_or_retry(state: AccordState) -> str:
         return "negotiate"
 
 
+def read_source_email(state: AccordState) -> AccordState:
+    """
+    If a source email ID is provided, read its body and parse any attachments.
+    This allows Accord to extract meeting requests from incoming emails.
+    """
+    email_id = state.get("source_email_id", "")
+    if not email_id:
+        return state
+
+    print(f"\nReading source email {email_id}...")
+    try:
+        creds = get_credentials()
+        service = get_gmail_service(creds)
+        email_data = read_email(service, email_id)
+        body = email_data.get("body_text", "")
+        attachments = email_data.get("attachments", [])
+
+        print(f"   Subject: {email_data.get('subject', '(none)')}")
+        print(f"   Body length: {len(body)} chars")
+        print(f"   Attachments: {len(attachments)}")
+
+        # Parse document attachments
+        docs = []
+        if attachments:
+            parsed = parse_attachments(attachments)
+            docs = parsed
+            for doc in parsed:
+                print(f"   Parsed doc: {doc['filename']} ({len(doc['text'])} chars)")
+
+        return {
+            **state,
+            "source_email_body": body,
+            "source_documents": docs,
+        }
+    except Exception as e:
+        print(f"   Error reading email: {e}")
+        return state
+
+
 def build_accord_graph():
     graph = StateGraph(AccordState)
 
+    graph.add_node("read_email", read_source_email)
     graph.add_node("parse", parse_request)
     graph.add_node("fetch", fetch_availability)
     graph.add_node("draft", draft_reply)
     graph.add_node("relax", relax_constraints)
     graph.add_node("negotiate", negotiate)
 
-    graph.set_entry_point("parse")
+    graph.set_entry_point("read_email")
+    graph.add_edge("read_email", "parse")
     graph.add_edge("parse", "fetch")
     graph.add_conditional_edges("fetch", should_draft_or_retry, {
         "draft": "draft",
@@ -267,7 +325,10 @@ if __name__ == "__main__":
         "draft_reply": "",
         "retry_count": 0,
         "is_compromise": False,
-        "unauthenticated_participants": []
+        "unauthenticated_participants": [],
+        "source_email_id": "",
+        "source_email_body": "",
+        "source_documents": [],
     })
 
     print("\n" + "=" * 50)
