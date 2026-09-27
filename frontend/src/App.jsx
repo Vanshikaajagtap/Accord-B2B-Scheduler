@@ -133,7 +133,9 @@ function App() {
           draft_reply: result.draft_reply,
           participants: result.participants,
           first_slot: result.free_slots?.[0] || {},
+          slots: result.free_slots?.slice(0, 3) || [],
           timezone: result.timezone,
+          source_email_id: result.source_email_id || "",
         }),
       });
       const data = await res.json();

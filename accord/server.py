@@ -10,10 +10,12 @@ from email_reader import list_inbox, read_email, search_emails, download_attachm
 from document_parser import parse_attachments as parse_docs
 from plugins import list_providers, get_provider
 from google_auth_oauthlib.flow import Flow
+from langchain_google_genai import ChatGoogleGenerativeAI
 import os
 import json
 import tempfile
 import threading
+import time
 
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
@@ -30,7 +32,86 @@ OAUTH_REDIRECT_URI = "http://localhost:5001/api/participants/auth-callback"
 # In-memory store: state -> email (cleared after use)
 _pending_auth: dict[str, str] = {}
 
+# In-memory store for auto-booking on reply
+# threadId -> dict of details
+_tracked_threads: dict[str, dict] = {}
+
 accord_graph = build_accord_graph()
+
+def start_polling_loop():
+    def poll_gmail():
+        llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0)
+        while True:
+            time.sleep(30)
+            if not _tracked_threads:
+                continue
+                
+            try:
+                creds = get_credentials()
+                gmail = get_gmail_service(creds)
+                
+                keys = list(_tracked_threads.keys())
+                for thread_id in keys:
+                    data = _tracked_threads[thread_id]
+                    # Check if there is a new message in this thread from the client
+                    client_email = data.get("client_email", "")
+                    query = f"thread:{thread_id} from:{client_email}"
+                    results = search_emails(gmail, query=query, max_results=5)
+                    
+                    if not results:
+                        continue
+                        
+                    # Filter out the original source email if they just replied
+                    reply_msg = None
+                    for msg in results:
+                        # Assuming the most recent one that is from the client is the reply
+                        if msg["id"] != data.get("source_email_id"):
+                            reply_msg = msg
+                            break
+                            
+                    if not reply_msg:
+                        continue
+                        
+                    # We have a new reply!
+                    print(f"Reply detected for thread {thread_id}!")
+                    email_data = read_email(gmail, reply_msg["id"])
+                    body = email_data.get("body_text", "")
+                    
+                    # Ask Gemini which slot they chose
+                    slots = data.get("slots", [])
+                    slots_str = "\n".join([f"Option {i+1}: {s.get('start')} to {s.get('end')}" for i, s in enumerate(slots)])
+                    
+                    prompt = f"A client replied to our meeting proposal. Our proposed slots were:\n{slots_str}\n\nClient reply:\n{body}\n\nExtract the confirmed time slot based on their reply. Return ONLY a JSON object with 'start' and 'end' keys containing the exact ISO timestamps from the options, or null if they didn't explicitly confirm any option."
+                    
+                    response = llm.invoke(prompt)
+                    content = response.content
+                    if isinstance(content, list):
+                        content = content[0]["text"] if isinstance(content[0], dict) else content[0]
+                    content = content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                    
+                    try:
+                        choice = json.loads(content)
+                        if choice and choice.get("start") and choice.get("end"):
+                            cal = get_calendar_service(creds)
+                            create_calendar_event(
+                                cal,
+                                summary="Meeting via Accord",
+                                attendees=data.get("participants", []) + [client_email],
+                                start_time=choice["start"],
+                                end_time=choice["end"],
+                                timezone=data.get("timezone", "UTC")
+                            )
+                            print(f"Successfully auto-booked event for thread {thread_id} at {choice['start']}!")
+                            # Stop tracking this thread since it's booked
+                            del _tracked_threads[thread_id]
+                        else:
+                            print(f"Gemini couldn't find a confirmed slot for thread {thread_id} in the reply.")
+                    except json.JSONDecodeError:
+                        print(f"Could not parse JSON from Gemini response for thread {thread_id}.")
+            except Exception as e:
+                print(f"Polling loop error: {e}")
+
+    threading.Thread(target=poll_gmail, daemon=True).start()
 
 
 @app.route("/api/health", methods=["GET"])
@@ -332,41 +413,51 @@ def approve_and_send():
     draft_reply = data.get("draft_reply", "")
     participants = data.get("participants", [])
     first_slot = data.get("first_slot", {})
+    all_slots = data.get("slots", [first_slot] if first_slot else [])
     timezone = data.get("timezone", "UTC")
+    source_email_id = data.get("source_email_id", "")
 
     results = {"email": None, "calendar": None}
 
     try:
         creds = get_credentials()
         gmail = get_gmail_service(creds)
+        # Assuming send_email returns a dict with 'id' and 'threadId' (or we can get it from 'id')
         r = send_email(
             gmail,
             to=client_email,
             subject="Meeting Request - Available Times",
             body=draft_reply
         )
-        results["email"] = {"success": True, "id": r["id"]}
+        
+        # We need the threadId to track replies
+        msg_id = r.get("id")
+        # Let's fetch the message to get its threadId if not returned by send_email
+        if "threadId" in r:
+            thread_id = r["threadId"]
+        else:
+            msg = gmail.users().messages().get(userId="me", id=msg_id, format="minimal").execute()
+            thread_id = msg.get("threadId", msg_id)
+
+        # Track this thread for auto-booking
+        _tracked_threads[thread_id] = {
+            "client_email": client_email,
+            "participants": participants,
+            "slots": all_slots,
+            "timezone": timezone,
+            "source_email_id": source_email_id
+        }
+
+        results["email"] = {"success": True, "id": msg_id, "threadId": thread_id}
+        # Do not book the calendar immediately - wait for reply!
+        results["calendar"] = {"success": True, "status": "Waiting for client reply to auto-book."}
     except Exception as e:
         results["email"] = {"success": False, "error": str(e)}
-
-    if first_slot:
-        try:
-            creds = get_credentials()
-            cal = get_calendar_service(creds)
-            event = create_calendar_event(
-                cal,
-                summary="Meeting via Accord",
-                attendees=participants + [client_email],
-                start_time=first_slot.get("start", ""),
-                end_time=first_slot.get("end", ""),
-                timezone=timezone
-            )
-            results["calendar"] = {"success": True, "link": event.get("htmlLink", "")}
-        except Exception as e:
-            results["calendar"] = {"success": False, "error": str(e)}
+        results["calendar"] = {"success": False, "error": "Email failed, not tracking for reply."}
 
     return jsonify(results)
 
 
 if __name__ == "__main__":
+    start_polling_loop()
     app.run(host="0.0.0.0", port=5001, debug=True)
