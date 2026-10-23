@@ -13,6 +13,12 @@ if "client_email" not in st.session_state:
     st.session_state.client_email = ""
 if "auth_message" not in st.session_state:
     st.session_state.auth_message = None
+if "inbox_emails" not in st.session_state:
+    st.session_state.inbox_emails = []
+if "selected_email" not in st.session_state:
+    st.session_state.selected_email = None
+if "parsed_docs" not in st.session_state:
+    st.session_state.parsed_docs = []
 
 with st.sidebar:
     st.header("Participant Authentication")
@@ -65,7 +71,10 @@ if run:
             "draft_reply": "",
             "retry_count": 0,
             "is_compromise": False,
-            "unauthenticated_participants": []
+            "unauthenticated_participants": [],
+            "source_email_id": "",
+            "source_email_body": "",
+            "source_documents": [],
         })
         st.session_state.result = result
         st.session_state.client_email = client_email
@@ -132,3 +141,64 @@ if st.session_state.result:
         if st.button("Reject & Discard", use_container_width=True, key="reject_btn"):
             st.session_state.result = None
             st.rerun()
+
+# ---------------------------------------------------------------------------
+# Email Inbox & Document Reader Tab
+# ---------------------------------------------------------------------------
+
+st.divider()
+st.header("📧 Email Inbox & Document Reader")
+
+inbox_col1, inbox_col2 = st.columns([1, 2])
+
+with inbox_col1:
+    st.subheader("Inbox")
+    inbox_query = st.text_input("Search emails (Gmail query):", value="", placeholder="is:unread", key="inbox_search")
+    if st.button("Load Inbox", key="load_inbox_btn"):
+        try:
+            creds = get_credentials()
+            gmail = get_gmail_service(creds)
+            from email_reader import list_inbox as _list_inbox
+            st.session_state.inbox_emails = _list_inbox(gmail, max_results=15, query=inbox_query or None)
+        except Exception as e:
+            st.error(f"Failed to load inbox: {e}")
+
+    for idx, em in enumerate(st.session_state.inbox_emails):
+        label = f"{em['subject'][:40]}  —  {em['from'][:30]}"
+        if st.button(label, key=f"email_{idx}"):
+            st.session_state.selected_email = em["id"]
+
+with inbox_col2:
+    st.subheader("Email Content")
+    if st.session_state.selected_email:
+        try:
+            creds = get_credentials()
+            gmail = get_gmail_service(creds)
+            from email_reader import read_email as _read_email, download_attachment
+            from document_parser import parse_attachments as _parse_attachments
+            detail = _read_email(gmail, st.session_state.selected_email)
+
+            st.write(f"**From:** {detail['from']}")
+            st.write(f"**To:** {detail['to']}")
+            st.write(f"**Subject:** {detail['subject']}")
+            st.write(f"**Date:** {detail['date']}")
+            st.text_area("Body", value=detail["body_text"], height=200, key="email_body")
+
+            if detail["attachments"]:
+                st.subheader("Attachments")
+                docs = _parse_attachments(detail["attachments"])
+                st.session_state.parsed_docs = docs
+                for doc in docs:
+                    with st.expander(f"📄 {doc['filename']} ({doc['mimeType']})"):
+                        st.text_area("Extracted Text", value=doc["text"], height=300, key=f"doc_{doc['filename']}")
+
+                if st.button("Feed to Accord Scheduler", key="feed_to_accord"):
+                    combined = detail["body_text"]
+                    for doc in docs:
+                        combined += f"\n\n--- {doc['filename']} ---\n{doc['text']}"
+                    st.session_state["raw_request_from_email"] = combined
+                    st.success("Email content ready for scheduling. Go to the main form above.")
+        except Exception as e:
+            st.error(f"Failed to read email: {e}")
+    else:
+        st.info("Select an email from the inbox to read its content and parse attachments.")
